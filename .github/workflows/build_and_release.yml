@@ -1,0 +1,81 @@
+name: Build And Release
+
+permissions:
+  contents: write
+  packages: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release Tag (e.g., v1.0.0)'
+        required: true
+      release_name:
+        description: 'Release Title (e.g., ExpandedTaskText v1.0.0)'
+        required: true
+      build_type:
+        type: choice
+        description: The build configuration (e.g., Release)
+        required: true
+        options: 
+        - Release
+        - Debug
+      release_notes:
+        description: 'Release Notes (optional)'
+        required: false
+
+env:
+  # Update these three values to reuse this workflow for another mod.
+  MOD_NAME: ExpandedTaskText
+  SOLUTION_FILE: ExpandedTaskText.sln
+  PROJECT_FILE: ExpandedTaskText/ExpandedTaskText.csproj
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0
+
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.SOLUTION_FILE }}
+
+      - name: Publish the project
+        run: dotnet publish ${{ env.PROJECT_FILE }} --configuration ${{ inputs.build_type }} --no-restore --output output/
+
+      - name: Copy files required for release into structure needed by SPT
+        run: |
+          DEST="SPT_Runtime/user/mods/${{ env.MOD_NAME }}"
+          PROJECT_DIR="$(dirname "${{ env.PROJECT_FILE }}")"
+          mkdir -p "$DEST"
+          cp "output/${{ env.MOD_NAME }}.dll" "$DEST"
+          if [ "${{ inputs.build_type }}" = "Debug" ]; then
+            cp "output/${{ env.MOD_NAME }}.pdb" "$DEST"
+          fi
+          if [ -d "$PROJECT_DIR/Resources" ]; then
+            cp -r "$PROJECT_DIR/Resources" "$DEST"
+          fi
+          if [ -f LICENSE.md ]; then
+            cp LICENSE.md "$DEST"
+          fi
+
+      - name: Zip the build and loose files
+        run: zip -r "${{ inputs.release_name }}.zip" "SPT_Runtime/user/mods/${{ env.MOD_NAME }}"
+
+      - name: Create GitHub Release Draft
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          name: ${{ inputs.release_name }}
+          body: ${{ inputs.release_notes }}
+          draft: true
+          files: |
+            ${{ inputs.release_name }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
