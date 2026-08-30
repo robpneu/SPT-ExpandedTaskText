@@ -1,11 +1,12 @@
 ﻿using System.Diagnostics;
 using System.Text;
 using ExpandedTaskText.Models;
+using SPTarkov.Common.Models.Logging;
 using SPTarkov.DI.Annotations;
 using SPTarkov.Server.Core.DI;
 using SPTarkov.Server.Core.Models.Common;
-using SPTarkov.Server.Core.Models.Utils;
-using SPTarkov.Server.Core.Services;
+using SPTarkov.Server.Core.Models.Spt.Tables;
+using SPTarkov.Server.Core.Services.Locales;
 using SPTarkov.Server.Core.Utils;
 using SPTarkov.Server.Core.Utils.Json;
 using Path = System.IO.Path;
@@ -17,7 +18,9 @@ namespace ExpandedTaskText;
 [Injectable(TypePriority = int.MaxValue)]
 public class ExpandedTaskText(
         ISptLogger<ExpandedTaskText> logger,
-        DatabaseService databaseService,
+        LocaleTable localeTable,
+        TradersTable tradersTable,
+        TemplateTable templateTable,
         LocaleService localeService,
         FileUtil fileUtil,
         JsonUtil jsonUtil
@@ -30,7 +33,7 @@ public class ExpandedTaskText(
 
     private Dictionary<MongoId, string> _questDescriptionCache = [];
     
-    public async Task OnLoad()
+    public async Task OnLoadAsync(CancellationToken cancellationToken)
     {
         var sw = Stopwatch.StartNew();
         var cachePath = Path.Combine(EttMetadata.ResourcesDirectory, "descriptionCache.json");
@@ -77,7 +80,7 @@ public class ExpandedTaskText(
                 continue;
             }
 
-            foreach (var (_, globalLocales) in databaseService.GetLocales().Global)
+            foreach (var (_, globalLocales) in localeTable.Global)
             {
                 UpdateTaskText(info, globalLocales, description);
             }
@@ -86,7 +89,7 @@ public class ExpandedTaskText(
         return Task.CompletedTask;
     }
     
-    private void UpdateTaskText(QuestInfo info, LazyLoad<Dictionary<string, string>> locales, string originalDescription)
+    private void UpdateTaskText(QuestInfo info, LazyLoad<GlobalLocaleDictionary> locales, string originalDescription)
     {
         if (!_questDescriptionCache.TryGetValue(info.Id, out var newDescription))
         {
@@ -143,7 +146,7 @@ public class ExpandedTaskText(
 
     private string GetNextQuests(MongoId currentQuestId)
     {
-        var quests = databaseService.GetQuests();
+        var quests = templateTable.Quests;
         var result = new List<string>();
         
         foreach (var (qid, quest) in quests)
@@ -225,10 +228,9 @@ public class ExpandedTaskText(
 
     private Dictionary<MongoId, int> GetAllTraderLoyalLevelItems()
     {
-        var traders = databaseService.GetTraders();
         var result = new Dictionary<MongoId, int>();
 
-        foreach (var (_, trader) in traders)
+        foreach (var (_, trader) in tradersTable)
         {
             foreach (var (id, level) in trader?.Assort?.LoyalLevelItems ?? [])
             {
@@ -242,7 +244,6 @@ public class ExpandedTaskText(
     private string GetGunsmithPartsList(MongoId mongoId, GunsmithInfo info)
     {
         var loyaltyLevelItems = GetAllTraderLoyalLevelItems();
-        var traders = databaseService.GetTraders();
         
         var sb = new StringBuilder();
         const string requiredDurability = "Required minimum gun durability: 60";
@@ -252,7 +253,7 @@ public class ExpandedTaskText(
         {
             sb.Append($"\n{GetLocale($"{partId.ToString()} Name")}");
 
-            foreach (var (tid, trader) in traders)
+            foreach (var (tid, trader) in tradersTable)
             {
                 if (trader?.Assort?.Items is null)
                 {
